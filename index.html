@@ -14,7 +14,6 @@
             background-color: #f7f7f7;
             margin: 0;
         }
-        /* Styles pour rendre le tableau plus lisible et gérer le défilement horizontal */
         .overflow-x-auto {
             overflow-x: auto;
         }
@@ -23,32 +22,34 @@
             left: 0;
             z-index: 10; 
         }
-        /* Fix pour la couleur de fond des cellules sticky dans le corps du tableau */
         .sticky-col-body {
-            background-color: #ffffff; /* Doit correspondre au fond du <tbody> */
+            background-color: #ffffff; 
+        }
+        /* Style pour masquer le contenu React tant que l'initialisation n'est pas terminée */
+        #root:empty::before {
+            content: "Chargement en cours...";
+            display: block;
+            text-align: center;
+            padding: 50px;
+            color: #4f46e5;
+            font-size: 1.25rem;
         }
     </style>
-</head>
-<body>
-    <!-- Le conteneur où l'application React sera rendue -->
-    <div id="root"></div>
 
-    <!-- Chargement des librairies React et ReactDOM -->
+    <!-- 1. CHARGEMENT DES LIBRAIRIES REACT ET BABEL -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- Utilisation de Babel pour compiler le JSX/ES6 en temps réel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Initialisation des services Firebase -->
+
+    <!-- 2. CHARGEMENT ET INITIALISATION DE FIREBASE (MUST BE TYPE="MODULE") -->
     <script type="module">
-        // Importations standard des modules Firebase
+        // Importations des modules Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // *******************************************************************
-        // !!! ÉTAPE CRUCIALE POUR GITHUB PAGES !!!
-        // REMPLACEZ CES PLACEHOLDERS PAR VOTRE PROPRE CONFIGURATION FIREBASE
+        // !!! CONFIGURATION FIREBASE !!!
         // *******************************************************************
         const firebaseConfig = {
           apiKey: "AIzaSyCZRKtoBY4LKH2_aqfOlUIEgSlLBxZknCg", 
@@ -58,125 +59,141 @@
           messagingSenderId: "225366459890",
           appId: "1:225366459890:web:f6c13a345b4e5b95b4976b"
         };
-        // L'ID de l'application/collection de base. 
         const APP_ID = firebaseConfig.projectId || 'black-dog-balades-live';
         // *******************************************************************
 
-        // Initialisation standard
+        // Initialisation des instances
         let app, db, auth;
         try {
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
         } catch (e) {
-            console.error("Erreur lors de l'initialisation de Firebase. Vérifiez firebaseConfig.", e);
+            console.error("Erreur lors de l'initialisation de Firebase.", e);
         }
         
-        // Exposer les fonctions Firebase et les variables globales nécessaires au script JSX
-        window.firebase = {
+        // EXPOSER TOUT CE QUI EST NÉCESSAIRE AU BLOC JSX
+        window.firebaseDependencies = {
+            // Fonctions Firestore
+            getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs,
+            // Fonctions Auth
             getAuth, signInAnonymously, onAuthStateChanged,
-            getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs
+            // Instances initialisées et ID
+            dbInstance: db,
+            authInstance: auth,
+            appId: APP_ID
         };
-        
-        // Exposer les variables d'environnement ajustées pour le déploiement statique
-        window.__app_id = APP_ID;
-        window.__db_instance = db;
-        window.__auth_instance = auth;
+
+        // Optionnel : Lancer un événement pour signaler que les dépendances sont prêtes
+        window.dispatchEvent(new CustomEvent('firebase-ready'));
     </script>
+</head>
+<body>
+    <div id="root"></div>
 
-
-    <!-- Intégration du code React/JSX dans une balise <script type="text/babel"> -->
+    <!-- 3. CODE REACT/JSX (S'exécute après le module Firebase) -->
     <script type="text/babel">
         // Import des hooks et composants React
         const { useState, useEffect, useCallback, useMemo, useRef } = React;
         
-        // Récupérer les fonctions et instances Firebase exposées
-        const { 
-            getAuth, signInAnonymously, onAuthStateChanged,
-            getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs
-        } = window.firebase;
-        
-        // Récupération des instances et variables globales
-        const appId = window.__app_id;
-        // On récupère les instances passées par le bloc type="module"
-        let db = window.__db_instance;
-        let auth = window.__auth_instance;
-        
-        if (!db || !auth) {
-            console.error("Firebase instances not properly initialized from the module block.");
-            // Si l'initialisation a échoué dans le bloc module, on peut tenter une initialisation de secours
-            // Ici, on part du principe que l'erreur sera gérée par l'état `isReady` et l'utilisateur devra vérifier sa config.
-        }
-
-        // --- CONFIGURATION DE BASE ET PROFILES CHIENS (Règles Métier) ---
-
-        // Les règles de compatibilité du chien (Étiquette -> Couleur + Compatibilité)
-        const DOG_PROFILES = {
-          // 🟣 1 — Chiot
-          Chiot: {
-            color: 'purple', emoji: '🟣', compatibleWith: ['Polyvalent', 'Chiot', 'Harceleur'],
-          },
-          // 🟡 2 — Polyvalent (Safe)
-          Polyvalent: {
-            color: 'yellow', emoji: '🟡', compatibleWith: ['Chiot', 'Polyvalent', 'Agressif', 'Peureux', 'Harceleur'],
-          },
-          // 🔴 3 — Agressif
-          Agressif: {
-            color: 'red', emoji: '🔴', compatibleWith: ['Polyvalent'],
-          },
-          // 🔵 4 — Peureux
-          Peureux: {
-            color: 'blue', emoji: '🔵', compatibleWith: ['Polyvalent', 'Chiot'],
-          },
-          // 🟠 5 — Harceleur
-          Harceleur: {
-            color: 'orange', emoji: '🟠', compatibleWith: ['Polyvalent', 'Harceleur', 'Chiot'],
-          },
+        // État initial pour les dépendances Firebase
+        const initialDependencies = {
+            dbInstance: null,
+            authInstance: null,
+            appId: 'loading',
+            // Remplir avec les fonctions nécessaires pour éviter les erreurs d'appel
+            getFirestore: () => console.error('DB not ready'),
+            getAuth: () => console.error('Auth not ready'),
+            // ... autres fonctions ...
+            doc: () => {}, setDoc: () => {}, collection: () => {}, query: () => {}, onSnapshot: () => {}, 
+            updateDoc: () => {}, arrayUnion: () => {}, serverTimestamp: () => {}, getDocs: () => {}, 
+            signInAnonymously: () => {}, onAuthStateChanged: () => {},
         };
 
-        // Jours et créneaux pour l'interface de disponibilité
-        const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-        const SLOTS = ['Matin', 'Début AP', 'Fin AP', 'Soirée'];
-
-
-        // Fonction utilitaire pour le chemin des collections publiques (pour le partage des matchs)
-        const getPublicCollectionRef = (collectionName) => {
-          return collection(db, `/artifacts/${appId}/public/data/${collectionName}`);
-        };
-
-
-        // Composant principal de l'application
         const App = () => {
+          // Utiliser un état pour stocker les dépendances une fois qu'elles sont chargées
+          const [firebaseDeps, setFirebaseDeps] = useState(initialDependencies);
+          const [isFirebaseLoaded, setIsFirebaseLoaded] = useState(false);
+
+          // Récupération des dépendances du module après l'événement 'firebase-ready'
+          useEffect(() => {
+            const loadDeps = () => {
+              if (window.firebaseDependencies) {
+                setFirebaseDeps(window.firebaseDependencies);
+                setIsFirebaseLoaded(true);
+              }
+            };
+            
+            // Si les dépendances sont déjà là, charger immédiatement (cas où le script JSX est lent)
+            if (window.firebaseDependencies) {
+                loadDeps();
+            } else {
+                // Attendre l'événement (cas le plus probable)
+                window.addEventListener('firebase-ready', loadDeps);
+            }
+            return () => window.removeEventListener('firebase-ready', loadDeps);
+          }, []);
+
+          // Destruction des dépendances pour React
+          const { 
+              dbInstance: db, authInstance: auth, appId,
+              getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs,
+              signInAnonymously, onAuthStateChanged
+          } = firebaseDeps;
+          
+          // --- Le reste du code React commence ici ---
+          
+          // --- CONFIGURATION DE BASE ET PROFILES CHIENS (Règles Métier) ---
+          const DOG_PROFILES = {
+            Chiot: { color: 'purple', emoji: '🟣', compatibleWith: ['Polyvalent', 'Chiot', 'Harceleur'] },
+            Polyvalent: { color: 'yellow', emoji: '🟡', compatibleWith: ['Chiot', 'Polyvalent', 'Agressif', 'Peureux', 'Harceleur'] },
+            Agressif: { color: 'red', emoji: '🔴', compatibleWith: ['Polyvalent'] },
+            Peureux: { color: 'blue', emoji: '🔵', compatibleWith: ['Polyvalent', 'Chiot'] },
+            Harceleur: { color: 'orange', emoji: '🟠', compatibleWith: ['Polyvalent', 'Harceleur', 'Chiot'] },
+          };
+          const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+          const SLOTS = ['Matin', 'Début AP', 'Fin AP', 'Soirée'];
+          const ADMIN_DOG_PROFILES = Object.keys(DOG_PROFILES);
+
+          // --- États React ---
           const [activeTab, setActiveTab] = useState('profil');
-          // Simplification de l'état d'auth pour le déploiement statique
           const [authState, setAuthState] = useState({ userId: null, isLoading: true, error: null });
           const [userName, setUserName] = useState('');
           const [userCity, setUserCity] = useState('');
           const [isEditingProfile, setIsEditingProfile] = useState(false);
-          const [userProfile, setUserProfile] = useState(null); // Contient toutes les données du profil
+          const [userProfile, setUserProfile] = useState(null); 
           const [availabilities, setAvailabilities] = useState({});
           const [matches, setMatches] = useState([]);
-          const [statusMessage, setStatusMessage] = useState({ type: '', text: '' }); // Pour afficher les messages (succès/erreur)
-          const [messageKey, setMessageKey] = useState(0); // Pour forcer la réinitialisation de l'input de chat
-          
-          // Référence pour s'assurer que l'auto-matching ne se lance qu'une seule fois
+          const [statusMessage, setStatusMessage] = useState({ type: '', text: '' }); 
           const autoMatchExecuted = useRef(false);
 
-          // Fonction pour mettre à jour le message d'état et l'effacer après un délai
+          // --- Fonctions Utils ---
           const updateStatus = (type, text) => {
             setStatusMessage({ type, text });
             setTimeout(() => setStatusMessage({ type: '', text: '' }), 4000);
           };
 
-          // 1. Initialisation de Firebase et Authentification (Utilisation de signInAnonymously)
-          useEffect(() => {
-            if (!auth) {
-              console.error("Firebase Auth n'est pas initialisé. Vérifiez la configuration.");
-              setAuthState(s => ({ ...s, isLoading: false, error: 'Auth non initialisé.' }));
-              return;
+          const getPublicCollectionRef = (collectionName) => {
+            if (!db) return null;
+            return collection(db, `/artifacts/${appId}/public/data/${collectionName}`);
+          };
+          
+          const areDogsCompatible = (profile1, profile2) => {
+            const p1Profile = DOG_PROFILES[profile1];
+            if (!p1Profile || !p1Profile.compatibleWith.includes(profile2)) {
+                return false;
             }
+            const p2Profile = DOG_PROFILES[profile2];
+            if (!p2Profile || !p2Profile.compatibleWith.includes(profile1)) {
+                return false;
+            }
+            return true;
+          };
 
-            // Lance l'authentification anonyme pour obtenir un UID
+          // 1. Initialisation de l'Auth
+          useEffect(() => {
+            if (!isFirebaseLoaded || !auth) return;
+
             const authenticate = async () => {
               try {
                 if (!auth.currentUser) {
@@ -189,33 +206,28 @@
               }
             };
 
-            // Écoute les changements d'état d'authentification
             const unsubscribe = onAuthStateChanged(auth, (user) => {
               if (user) {
                 setAuthState({ userId: user.uid, isLoading: false, error: null });
-                console.log(`Authentifié avec UID: ${user.uid}`);
               } else if (!authState.error) {
-                // Si aucune erreur d'auth n'est déjà présente, tente d'authentifier
                 authenticate(); 
               }
             });
 
             return () => unsubscribe();
-          }, []);
+          }, [isFirebaseLoaded]); // Dépend de l'état de chargement de Firebase
 
           const userId = authState.userId;
-          const isReady = !authState.isLoading && userId;
-
+          const isReady = isFirebaseLoaded && !authState.isLoading && userId;
+          
           // 2. Gestion des données Firestore (Profil, Disponibilité, Matchs)
           useEffect(() => {
-            if (!isReady || authState.error) return;
+            if (!isReady || authState.error || !db) return;
 
-            // Définition des références aux documents/collections
             const profileRef = doc(getPublicCollectionRef('user_profiles'), userId);
             const availRef = doc(getPublicCollectionRef('availabilities'), userId);
             const qMatches = query(getPublicCollectionRef('matches'));
 
-            // A. Écouter les changements du profil utilisateur
             const unsubProfile = onSnapshot(profileRef, (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
@@ -223,27 +235,22 @@
                 setUserName(data.name || '');
                 setUserCity(data.city || '');
               } else {
-                // Le profil n'existe pas, l'initialiser
                 setUserProfile({ name: '', city: '', dogProfileLabel: '', dogProfileColor: '' });
               }
             }, (error) => console.error("Erreur de snapshot de profil:", error));
 
-            // B. Écouter les changements de disponibilité
             const unsubAvail = onSnapshot(availRef, (docSnap) => {
               if (docSnap.exists()) {
                 setAvailabilities(docSnap.data().slots || {});
               } else {
-                // Initialiser la disponibilité vide si le document n'existe pas
                 const initialSlots = {};
                 DAYS.forEach(day => initialSlots[day] = SLOTS.reduce((acc, slot) => ({ ...acc, [slot]: false }), {}));
                 setAvailabilities(initialSlots);
               }
             }, (error) => console.error("Erreur de snapshot de disponibilité:", error));
 
-            // C. Écouter les changements des matchs (tous les matchs)
             const unsubMatches = onSnapshot(qMatches, (snapshot) => {
               const allMatches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-              // Filtrer pour ne montrer que les matchs de l'utilisateur actuel
               const myMatches = allMatches.filter(match => match.members.some(m => m.userId === userId));
               setMatches(myMatches.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0)));
             }, (error) => console.error("Erreur de snapshot de matchs:", error));
@@ -254,22 +261,19 @@
               unsubAvail();
               unsubMatches();
             };
-          }, [isReady, authState.error]);
+          }, [isReady, authState.error, db]);
 
           // 3. Logique d'auto-initialisation forcée (pour garantir un match en démo)
           useEffect(() => {
-            if (!isReady || autoMatchExecuted.current || authState.error) return;
+            if (!isReady || autoMatchExecuted.current || authState.error || !db) return;
             
-            // On vérifie si l'utilisateur a déjà un profil non vide
             const profileExists = userProfile && userProfile.dogProfileLabel && userProfile.name && userProfile.city;
 
             if (!profileExists && userProfile && Object.keys(userProfile).length > 0) {
-                // Fonction asynchrone pour regrouper les étapes
                 const setupAndMatch = async () => {
                     updateStatus('info', 'Configuration de démo forcée en cours (assignation profil + dispo + matching)...');
-                    autoMatchExecuted.current = true; // Empêche les multiples exécutions
+                    autoMatchExecuted.current = true;
 
-                    // 1. Assignation du profil le plus compatible: Polyvalent (🟡)
                     const label = 'Polyvalent';
                     const profile = DOG_PROFILES[label];
                     const profileData = {
@@ -281,13 +285,11 @@
                     };
                     await setDoc(doc(getPublicCollectionRef('user_profiles'), userId), profileData, { merge: true });
 
-                    // 2. Disponibilité complète
                     const allSlots = {};
                     DAYS.forEach(day => allSlots[day] = SLOTS.reduce((acc, slot) => ({ ...acc, [slot]: true }), {}));
                     const availRef = doc(getPublicCollectionRef('availabilities'), userId);
                     await setDoc(availRef, { userId, slots: allSlots }, { merge: true });
                     
-                    // 3. Lancer le matching (avec un petit délai pour que la base de données se mette à jour)
                     setTimeout(async () => {
                         await runMatchingLogic();
                         setActiveTab('groupes'); 
@@ -296,7 +298,7 @@
                 
                 setupAndMatch();
             }
-          }, [isReady, userProfile, authState.error]);
+          }, [isReady, userProfile, authState.error, db]);
 
 
           // Fonction de sauvegarde du profil
@@ -356,7 +358,7 @@
 
           // Fonction d'envoi de message dans un match
           const handleSendMessage = async (matchId, messageText) => {
-            if (!isReady || authState.error) return;
+            if (!isReady || authState.error || !db) return;
             if (!messageText.trim() || !userProfile || !userProfile.name) return;
 
             try {
@@ -365,24 +367,21 @@
                 senderId: userId,
                 senderName: userProfile.name,
                 text: messageText,
-                timestamp: serverTimestamp(), // Utiliser serverTimestamp() pour un meilleur ordre
+                timestamp: serverTimestamp(), 
               };
               await updateDoc(matchRef, {
                 messages: arrayUnion(message)
               });
-              setMessageInput(''); // Réinitialiser l'input ici pour une meilleure UX
+              // Pas de réinitialisation ici, car gérée par le composant enfant MatchCard
             } catch (e) {
               console.error("Erreur lors de l'envoi du message: ", e);
               updateStatus('error', 'Erreur lors de l\'envoi du message.');
             }
           };
 
-          // --- LOGIQUE ADMIN SIMPLIFIÉE (Fonction de Matching et d'Assignation de Profil) ---
-          const ADMIN_DOG_PROFILES = Object.keys(DOG_PROFILES);
-
           // Fonction pour l'Admin: Attribuer un profil à un utilisateur (pour la démo)
           const assignRandomProfile = async () => {
-            if (!isReady) {
+            if (!isReady || !db) {
                 updateStatus('error', 'Connexion en cours, veuillez patienter.');
                 return;
             }
@@ -393,8 +392,8 @@
             const profileData = {
               name: userName || 'Utilisateur Test',
               city: userCity || 'Niort',
-              dogProfileLabel: randomLabel, // L'étiquette cachée (Admin)
-              dogProfileColor: profile.emoji, // La couleur visible (Client)
+              dogProfileLabel: randomLabel, 
+              dogProfileColor: profile.emoji, 
               lastUpdate: serverTimestamp(),
             };
 
@@ -407,32 +406,23 @@
             }
           };
 
-          // Fonction pour vérifier la compatibilité
-          const areDogsCompatible = (profile1, profile2) => {
-            const p1Profile = DOG_PROFILES[profile1];
-            // Si le profil 1 n'existe pas ou le profil 2 n'est pas dans sa liste de compatibilité
-            if (!p1Profile || !p1Profile.compatibleWith.includes(profile2)) {
-                return false;
-            }
-            // Vérifier la compatibilité mutuelle
-            const p2Profile = DOG_PROFILES[profile2];
-            if (!p2Profile || !p2Profile.compatibleWith.includes(profile1)) {
-                return false;
-            }
-
-            return true;
-          };
-
           // Algorithme de Matching (SIMULATION ADMIN)
           const runMatchingLogic = async () => {
-            if (!isReady || authState.error) {
+            if (!isReady || authState.error || !db) {
               updateStatus('error', 'Connexion non établie ou erreur Firebase.');
               return;
             }
 
             updateStatus('info', 'Lancement de l\'algorithme de matching...');
 
-            // 1. Récupérer tous les profils et toutes les disponibilités
+            // Vider les matchs existants pour éviter les doublons persistants en mode démo
+            const existingMatchesSnapshot = await getDocs(getPublicCollectionRef('matches'));
+            const deletePromises = existingMatchesSnapshot.docs
+                .filter(doc => doc.data().members.some(m => m.userId === userId)) // Supprimer seulement les matchs de l'utilisateur actuel
+                .map(doc => deleteDoc(doc.ref));
+            await Promise.all(deletePromises);
+
+
             const [profilesSnapshot, availabilitiesSnapshot] = await Promise.all([
               getDocs(getPublicCollectionRef('user_profiles')),
               getDocs(getPublicCollectionRef('availabilities'))
@@ -457,31 +447,24 @@
 
             let successfulMatches = [];
 
-            // 2. Parcourir chaque jour et chaque créneau
             DAYS.forEach(day => {
               SLOTS.forEach(slot => {
                 
-                // Filtrer les utilisateurs disponibles pour ce créneau
                 let availableUsers = users.filter(u => u.slots?.[day]?.[slot]);
-
                 if (availableUsers.length < 2) return; 
 
-                // Utilisation d'un set pour suivre les utilisateurs déjà inclus dans un groupe
                 let matchedUserIds = new Set();
                 let groups = [];
 
-                // Itération pour former les groupes
                 availableUsers.forEach(userA => {
                   if (matchedUserIds.has(userA.userId)) return;
 
                   let currentGroup = [userA];
                   matchedUserIds.add(userA.userId);
 
-                  // Chercher les autres membres compatibles
                   availableUsers.forEach(userB => {
                     if (userA.userId === userB.userId || matchedUserIds.has(userB.userId)) return;
 
-                    // Vérifier la compatibilité de UserB avec TOUS les membres actuels du groupe
                     const isCompatibleWithGroup = currentGroup.every(existingMember =>
                       areDogsCompatible(existingMember.dogProfileLabel, userB.dogProfileLabel)
                     );
@@ -492,18 +475,14 @@
                     }
                   });
 
-                  // Si le groupe a au moins 2 membres, le valider
                   if (currentGroup.length >= 2) {
                     groups.push(currentGroup);
                   } else {
-                    // Si un utilisateur ne peut pas être groupé, on le dé-match 
                     matchedUserIds.delete(userA.userId);
                   }
                 });
 
-                // 3. Finaliser et sauvegarder les matchs
                 groups.forEach(group => {
-                  // Déterminer le lieu recommandé (le plus fréquent ou Niort)
                   const cityCounts = group.reduce((acc, m) => {
                     acc[m.city] = (acc[m.city] || 0) + 1;
                     return acc;
@@ -517,7 +496,7 @@
                       maxCount = count;
                       recommendedCity = city;
                     } else if (count === maxCount && city === 'Niort') {
-                       recommendedCity = 'Niort';
+                       recommendedCity = city;
                     }
                   }
                   
@@ -530,7 +509,6 @@
                     createdAt: serverTimestamp(),
                   };
 
-                  // Utiliser un ID basé sur le créneau + un hash pour l'unicité
                   const matchId = `${day}-${slot}-${Math.random().toString(36).substring(2, 9)}`;
                   successfulMatches.push(setDoc(doc(getPublicCollectionRef('matches'), matchId), matchData));
                 });
@@ -667,7 +645,6 @@
                   <div className="text-right">
                     <p className="text-xs text-gray-500">Profil attribué (Règle de compatibilité)</p>
                     <p className="text-sm font-bold text-indigo-600">
-                      {/* Affichage de l'étiquette pour la démo */}
                       {isReady && userProfile.dogProfileLabel ? `(DÉMO: ${userProfile.dogProfileLabel})` : 'En attente'}
                     </p>
                   </div>
@@ -750,21 +727,19 @@
 
             const memberList = members.map(m => m.color + ' ' + m.name).join(', ');
 
-            // Triez les messages. Les messages sans timestamp ou avec serverTimestamp() en attente iront à la fin.
             const sortedMessages = messages.sort((a, b) => {
                 const timestampA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
                 const timestampB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
                 return timestampA - timestampB;
-            }).filter(msg => msg.text); // Filtrer les messages incomplets si serverTimestamp est encore en attente
+            }).filter(msg => msg.text);
 
             const handleSend = () => {
               if (messageInput.trim()) {
-                // onSendMessage gère la réinitialisation de l'input
                 onSendMessage(match.id, messageInput);
+                setMessageInput(''); // Réinitialiser l'input ici
               }
             };
             
-            // Effet pour forcer le scroll vers le bas du chat lors de nouveaux messages
             const chatContainerRef = useRef(null);
             useEffect(() => {
                 if (chatContainerRef.current) {
@@ -837,7 +812,7 @@
 
 
           // --- RENDU GLOBAL ---
-          if (!isReady || authState.error) {
+          if (!isFirebaseLoaded || authState.error) {
             return (
               <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
                 <div className="text-center p-6 bg-white rounded-xl shadow-2xl">
@@ -855,6 +830,18 @@
               </div>
             );
           }
+          
+          if (!isReady) {
+              return (
+                  <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                      <div className="text-center p-6 bg-white rounded-xl shadow-2xl">
+                          <svg className="h-8 w-8 mx-auto mb-4 animate-spin text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          <p className="mt-4 text-gray-700">Authentification en cours...</p>
+                          <p className="mt-2 text-xs text-gray-500">UID: {userId || 'En attente'}</p>
+                      </div>
+                  </div>
+              );
+          }
 
           return (
             <div className="min-h-screen bg-gray-50 font-sans p-4 sm:p-6">
@@ -871,3 +858,29 @@
                     <NavButton tab="groupes" label="Groupes & Chat" icon="💬" />
                   </div>
                 </div>
+
+                <div className="mt-6">
+                  <StatusDisplay message={statusMessage} />
+                  {activeTab === 'profil' && <PageProfil />}
+                  {activeTab === 'disponibilites' && <PageDisponibilites />}
+                  {activeTab === 'groupes' && <PageGroupes />}
+                </div>
+                
+                <div className="mt-12 p-4 text-center text-xs text-gray-400 border-t pt-4">
+                    <p>ID de l'Application (pour le partage des données) : {appId}</p>
+                    <p>Votre ID d'utilisateur : {userId}</p>
+                    <p>Version Démo Statique V1.1</p>
+                </div>
+
+              </div>
+            </div>
+          );
+        }
+
+        // Rendu final de l'application
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+
+    </script>
+</body>
+</html>
