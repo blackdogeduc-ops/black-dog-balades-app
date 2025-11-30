@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Black Dog Balades</title>
+    <!-- Chargement de Tailwind CSS pour le style -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Utilisation de la police Inter -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+            margin: 0;
+        }
+        /* Styles pour rendre le tableau plus lisible et gérer le défilement horizontal */
+        .overflow-x-auto {
+            overflow-x: auto;
+        }
+        .sticky-col {
+            position: sticky;
+            left: 0;
+            z-index: 10; 
+        }
+        /* Fix pour la couleur de fond des cellules sticky dans le corps du tableau */
+        .sticky-col-body {
+            background-color: #ffffff; /* Doit correspondre au fond du <tbody> */
+        }
+    </style>
+</head>
+<body>
+    <!-- Le conteneur où l'application React sera rendue -->
+    <div id="root"></div>
+
+    <!-- Chargement des librairies React et ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Utilisation de Babel pour compiler le JSX/ES6 en temps réel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Initialisation des services Firebase -->
+    <script type="module">
+        // Importations standard des modules Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // *******************************************************************
+        // !!! ÉTAPE CRUCIALE POUR GITHUB PAGES !!!
+        // REMPLACEZ CES PLACEHOLDERS PAR VOTRE PROPRE CONFIGURATION FIREBASE
+        // *******************************************************************
+        const firebaseConfig = {
+          apiKey: "AIzaSyCZRKtoBY4LKH2_aqfOlUIEgSlLBxZknCg", 
+          authDomain: "black-dog-balades.firebaseapp.com",
+          projectId: "black-dog-balades", 
+          storageBucket: "black-dog-balades.firebasestorage.app",
+          messagingSenderId: "225366459890",
+          appId: "1:225366459890:web:f6c13a345b4e5b95b4976b"
+        };
+        // L'ID de l'application/collection de base. 
+        const APP_ID = firebaseConfig.projectId || 'black-dog-balades-live';
+        // *******************************************************************
+
+        // Initialisation standard
+        let app, db, auth;
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        } catch (e) {
+            console.error("Erreur lors de l'initialisation de Firebase. Vérifiez firebaseConfig.", e);
+        }
+        
+        // Exposer les fonctions Firebase et les variables globales nécessaires au script JSX
+        window.firebase = {
+            getAuth, signInAnonymously, onAuthStateChanged,
+            getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs
+        };
+        
+        // Exposer les variables d'environnement ajustées pour le déploiement statique
+        window.__app_id = APP_ID;
+        window.__db_instance = db;
+        window.__auth_instance = auth;
+    </script>
+
+
+    <!-- Intégration du code React/JSX dans une balise <script type="text/babel"> -->
+    <script type="text/babel">
+        // Import des hooks et composants React
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+        
+        // Récupérer les fonctions et instances Firebase exposées
+        const { 
+            getAuth, signInAnonymously, onAuthStateChanged,
+            getFirestore, doc, setDoc, collection, query, onSnapshot, updateDoc, arrayUnion, serverTimestamp, getDocs
+        } = window.firebase;
+        
+        // Récupération des instances et variables globales
+        const appId = window.__app_id;
+        // On récupère les instances passées par le bloc type="module"
+        let db = window.__db_instance;
+        let auth = window.__auth_instance;
+        
+        if (!db || !auth) {
+            console.error("Firebase instances not properly initialized from the module block.");
+            // Si l'initialisation a échoué dans le bloc module, on peut tenter une initialisation de secours
+            // Ici, on part du principe que l'erreur sera gérée par l'état `isReady` et l'utilisateur devra vérifier sa config.
+        }
+
+        // --- CONFIGURATION DE BASE ET PROFILES CHIENS (Règles Métier) ---
+
+        // Les règles de compatibilité du chien (Étiquette -> Couleur + Compatibilité)
+        const DOG_PROFILES = {
+          // 🟣 1 — Chiot
+          Chiot: {
+            color: 'purple', emoji: '🟣', compatibleWith: ['Polyvalent', 'Chiot', 'Harceleur'],
+          },
+          // 🟡 2 — Polyvalent (Safe)
+          Polyvalent: {
+            color: 'yellow', emoji: '🟡', compatibleWith: ['Chiot', 'Polyvalent', 'Agressif', 'Peureux', 'Harceleur'],
+          },
+          // 🔴 3 — Agressif
+          Agressif: {
+            color: 'red', emoji: '🔴', compatibleWith: ['Polyvalent'],
+          },
+          // 🔵 4 — Peureux
+          Peureux: {
+            color: 'blue', emoji: '🔵', compatibleWith: ['Polyvalent', 'Chiot'],
+          },
+          // 🟠 5 — Harceleur
+          Harceleur: {
+            color: 'orange', emoji: '🟠', compatibleWith: ['Polyvalent', 'Harceleur', 'Chiot'],
+          },
+        };
+
+        // Jours et créneaux pour l'interface de disponibilité
+        const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+        const SLOTS = ['Matin', 'Début AP', 'Fin AP', 'Soirée'];
+
+
+        // Fonction utilitaire pour le chemin des collections publiques (pour le partage des matchs)
+        const getPublicCollectionRef = (collectionName) => {
+          return collection(db, `/artifacts/${appId}/public/data/${collectionName}`);
+        };
+
+
+        // Composant principal de l'application
+        const App = () => {
+          const [activeTab, setActiveTab] = useState('profil');
+          // Simplification de l'état d'auth pour le déploiement statique
+          const [authState, setAuthState] = useState({ userId: null, isLoading: true, error: null });
+          const [userName, setUserName] = useState('');
+          const [userCity, setUserCity] = useState('');
+          const [isEditingProfile, setIsEditingProfile] = useState(false);
+          const [userProfile, setUserProfile] = useState(null); // Contient toutes les données du profil
+          const [availabilities, setAvailabilities] = useState({});
+          const [matches, setMatches] = useState([]);
+          const [statusMessage, setStatusMessage] = useState({ type: '', text: '' }); // Pour afficher les messages (succès/erreur)
+          const [messageKey, setMessageKey] = useState(0); // Pour forcer la réinitialisation de l'input de chat
+          
+          // Référence pour s'assurer que l'auto-matching ne se lance qu'une seule fois
+          const autoMatchExecuted = useRef(false);
+
+          // Fonction pour mettre à jour le message d'état et l'effacer après un délai
+          const updateStatus = (type, text) => {
+            setStatusMessage({ type, text });
+            setTimeout(() => setStatusMessage({ type: '', text: '' }), 4000);
+          };
+
+          // 1. Initialisation de Firebase et Authentification (Utilisation de signInAnonymously)
+          useEffect(() => {
+            if (!auth) {
+              console.error("Firebase Auth n'est pas initialisé. Vérifiez la configuration.");
+              setAuthState(s => ({ ...s, isLoading: false, error: 'Auth non initialisé.' }));
+              return;
+            }
+
+            // Lance l'authentification anonyme pour obtenir un UID
+            const authenticate = async () => {
+              try {
+                if (!auth.currentUser) {
+                    await signInAnonymously(auth);
+                }
+              } catch (error) {
+                console.error("Erreur d'authentification Firebase:", error);
+                setAuthState(s => ({ ...s, isLoading: false, error: 'Échec de la connexion Firebase.' }));
+                updateStatus('error', 'Erreur de connexion à la base de données. Vérifiez votre configuration Firebase.');
+              }
+            };
+
+            // Écoute les changements d'état d'authentification
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+              if (user) {
+                setAuthState({ userId: user.uid, isLoading: false, error: null });
+                console.log(`Authentifié avec UID: ${user.uid}`);
+              } else if (!authState.error) {
+                // Si aucune erreur d'auth n'est déjà présente, tente d'authentifier
+                authenticate(); 
+              }
+            });
+
+            return () => unsubscribe();
+          }, []);
+
+          const userId = authState.userId;
+          const isReady = !authState.isLoading && userId;
+
+          // 2. Gestion des données Firestore (Profil, Disponibilité, Matchs)
+          useEffect(() => {
+            if (!isReady || authState.error) return;
+
+            // Définition des références aux documents/collections
+            const profileRef = doc(getPublicCollectionRef('user_profiles'), userId);
+            const availRef = doc(getPublicCollectionRef('availabilities'), userId);
+            const qMatches = query(getPublicCollectionRef('matches'));
+
+            // A. Écouter les changements du profil utilisateur
+            const unsubProfile = onSnapshot(profileRef, (docSnap) => {
+              if (docSnap.exists()) {
+                const data = docSnap.data();
+                setUserProfile(data);
+                setUserName(data.name || '');
+                setUserCity(data.city || '');
+              } else {
+                // Le profil n'existe pas, l'initialiser
+                setUserProfile({ name: '', city: '', dogProfileLabel: '', dogProfileColor: '' });
+              }
+            }, (error) => console.error("Erreur de snapshot de profil:", error));
+
+            // B. Écouter les changements de disponibilité
+            const unsubAvail = onSnapshot(availRef, (docSnap) => {
+              if (docSnap.exists()) {
+                setAvailabilities(docSnap.data().slots || {});
+              } else {
+                // Initialiser la disponibilité vide si le document n'existe pas
+                const initialSlots = {};
+                DAYS.forEach(day => initialSlots[day] = SLOTS.reduce((acc, slot) => ({ ...acc, [slot]: false }), {}));
+                setAvailabilities(initialSlots);
+              }
+            }, (error) => console.error("Erreur de snapshot de disponibilité:", error));
+
+            // C. Écouter les changements des matchs (tous les matchs)
+            const unsubMatches = onSnapshot(qMatches, (snapshot) => {
+              const allMatches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              // Filtrer pour ne montrer que les matchs de l'utilisateur actuel
+              const myMatches = allMatches.filter(match => match.members.some(m => m.userId === userId));
+              setMatches(myMatches.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0)));
+            }, (error) => console.error("Erreur de snapshot de matchs:", error));
+
+
+            return () => {
+              unsubProfile();
+              unsubAvail();
+              unsubMatches();
+            };
+          }, [isReady, authState.error]);
+
+          // 3. Logique d'auto-initialisation forcée (pour garantir un match en démo)
+          useEffect(() => {
+            if (!isReady || autoMatchExecuted.current || authState.error) return;
+            
+            // On vérifie si l'utilisateur a déjà un profil non vide
+            const profileExists = userProfile && userProfile.dogProfileLabel && userProfile.name && userProfile.city;
+
+            if (!profileExists && userProfile && Object.keys(userProfile).length > 0) {
+                // Fonction asynchrone pour regrouper les étapes
+                const setupAndMatch = async () => {
+                    updateStatus('info', 'Configuration de démo forcée en cours (assignation profil + dispo + matching)...');
+                    autoMatchExecuted.current = true; // Empêche les multiples exécutions
+
+                    // 1. Assignation du profil le plus compatible: Polyvalent (🟡)
+                    const label = 'Polyvalent';
+                    const profile = DOG_PROFILES[label];
+                    const profileData = {
+                      name: userName || 'Utilisateur Demo', 
+                      city: userCity || 'Niort', 
+                      dogProfileLabel: label, 
+                      dogProfileColor: profile.emoji, 
+                      lastUpdate: serverTimestamp(),
+                    };
+                    await setDoc(doc(getPublicCollectionRef('user_profiles'), userId), profileData, { merge: true });
+
+                    // 2. Disponibilité complète
+                    const allSlots = {};
+                    DAYS.forEach(day => allSlots[day] = SLOTS.reduce((acc, slot) => ({ ...acc, [slot]: true }), {}));
+                    const availRef = doc(getPublicCollectionRef('availabilities'), userId);
+                    await setDoc(availRef, { userId, slots: allSlots }, { merge: true });
+                    
+                    // 3. Lancer le matching (avec un petit délai pour que la base de données se mette à jour)
+                    setTimeout(async () => {
+                        await runMatchingLogic();
+                        setActiveTab('groupes'); 
+                    }, 1500);
+                };
+                
+                setupAndMatch();
+            }
+          }, [isReady, userProfile, authState.error]);
+
+
+          // Fonction de sauvegarde du profil
+          const handleSaveProfile = async () => {
+            if (!isReady) {
+                updateStatus('error', 'Connexion en cours, veuillez patienter.');
+                return;
+            }
+            if (!userName || !userCity) {
+              updateStatus('error', 'Le nom et la ville sont obligatoires.');
+              return;
+            }
+
+            if (!userProfile.dogProfileLabel) {
+              updateStatus('error', 'Veuillez d\'abord vous attribuer un profil de chien (Admin Simulé).');
+              return;
+            }
+
+            const profileData = {
+              ...userProfile,
+              name: userName,
+              city: userCity,
+              lastUpdate: serverTimestamp(),
+            };
+
+            try {
+              await setDoc(doc(getPublicCollectionRef('user_profiles'), userId), profileData, { merge: true });
+              setIsEditingProfile(false);
+              updateStatus('success', 'Profil mis à jour avec succès.');
+            } catch (e) {
+              console.error("Erreur lors de la mise à jour du profil: ", e);
+              updateStatus('error', 'Erreur lors de la sauvegarde du profil.');
+            }
+          };
+
+          // Fonction de mise à jour des disponibilités
+          const handleSlotToggle = useCallback(async (day, slot) => {
+            if (!isReady) return;
+
+            const newAvailabilities = {
+              ...availabilities,
+              [day]: {
+                ...(availabilities[day] || {}),
+                [slot]: !(availabilities[day]?.[slot] || false),
+              }
+            };
+            setAvailabilities(newAvailabilities);
+
+            try {
+              const availRef = doc(getPublicCollectionRef('availabilities'), userId);
+              await setDoc(availRef, { userId, slots: newAvailabilities }, { merge: true });
+            } catch (e) {
+              console.error("Erreur lors de la mise à jour des disponibilités: ", e);
+              updateStatus('error', 'Erreur lors de la sauvegarde des disponibilités.');
+            }
+          }, [isReady, userId, availabilities]);
+
+          // Fonction d'envoi de message dans un match
+          const handleSendMessage = async (matchId, messageText) => {
+            if (!isReady || authState.error) return;
+            if (!messageText.trim() || !userProfile || !userProfile.name) return;
+
+            try {
+              const matchRef = doc(getPublicCollectionRef('matches'), matchId);
+              const message = {
+                senderId: userId,
+                senderName: userProfile.name,
+                text: messageText,
+                timestamp: serverTimestamp(), // Utiliser serverTimestamp() pour un meilleur ordre
+              };
+              await updateDoc(matchRef, {
+                messages: arrayUnion(message)
+              });
+              setMessageInput(''); // Réinitialiser l'input ici pour une meilleure UX
+            } catch (e) {
+              console.error("Erreur lors de l'envoi du message: ", e);
+              updateStatus('error', 'Erreur lors de l\'envoi du message.');
+            }
+          };
+
+          // --- LOGIQUE ADMIN SIMPLIFIÉE (Fonction de Matching et d'Assignation de Profil) ---
+          const ADMIN_DOG_PROFILES = Object.keys(DOG_PROFILES);
+
+          // Fonction pour l'Admin: Attribuer un profil à un utilisateur (pour la démo)
+          const assignRandomProfile = async () => {
+            if (!isReady) {
+                updateStatus('error', 'Connexion en cours, veuillez patienter.');
+                return;
+            }
+
+            const randomLabel = ADMIN_DOG_PROFILES[Math.floor(Math.random() * ADMIN_DOG_PROFILES.length)];
+            const profile = DOG_PROFILES[randomLabel];
+
+            const profileData = {
+              name: userName || 'Utilisateur Test',
+              city: userCity || 'Niort',
+              dogProfileLabel: randomLabel, // L'étiquette cachée (Admin)
+              dogProfileColor: profile.emoji, // La couleur visible (Client)
+              lastUpdate: serverTimestamp(),
+            };
+
+            try {
+              await setDoc(doc(getPublicCollectionRef('user_profiles'), userId), profileData, { merge: true });
+              updateStatus('success', `(ADMIN) Profil "${randomLabel}" assigné avec succès. Veuillez maintenant remplir votre nom et ville.`);
+            } catch (e) {
+              console.error("Erreur lors de l'assignation du profil: ", e);
+              updateStatus('error', "Erreur lors de l'assignation du profil.");
+            }
+          };
+
+          // Fonction pour vérifier la compatibilité
+          const areDogsCompatible = (profile1, profile2) => {
+            const p1Profile = DOG_PROFILES[profile1];
+            // Si le profil 1 n'existe pas ou le profil 2 n'est pas dans sa liste de compatibilité
+            if (!p1Profile || !p1Profile.compatibleWith.includes(profile2)) {
+                return false;
+            }
+            // Vérifier la compatibilité mutuelle
+            const p2Profile = DOG_PROFILES[profile2];
+            if (!p2Profile || !p2Profile.compatibleWith.includes(profile1)) {
+                return false;
+            }
+
+            return true;
+          };
+
+          // Algorithme de Matching (SIMULATION ADMIN)
+          const runMatchingLogic = async () => {
+            if (!isReady || authState.error) {
+              updateStatus('error', 'Connexion non établie ou erreur Firebase.');
+              return;
+            }
+
+            updateStatus('info', 'Lancement de l\'algorithme de matching...');
+
+            // 1. Récupérer tous les profils et toutes les disponibilités
+            const [profilesSnapshot, availabilitiesSnapshot] = await Promise.all([
+              getDocs(getPublicCollectionRef('user_profiles')),
+              getDocs(getPublicCollectionRef('availabilities'))
+            ]);
+
+            const allProfiles = profilesSnapshot.docs.map(doc => ({ userId: doc.id, ...doc.data() }));
+            const allAvailabilities = availabilitiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            const usersData = allProfiles.filter(p => p.dogProfileLabel && p.name && p.city).reduce((acc, profile) => {
+              const availability = allAvailabilities.find(a => a.userId === profile.userId);
+              if (availability) {
+                acc[profile.userId] = { ...profile, slots: availability.slots };
+              }
+              return acc;
+            }, {});
+
+            const users = Object.values(usersData);
+            if (users.length < 2) {
+              updateStatus('info', 'Moins de deux utilisateurs (Profil + Nom/Ville + Disponibilité) pour un match.');
+              return;
+            }
+
+            let successfulMatches = [];
+
+            // 2. Parcourir chaque jour et chaque créneau
+            DAYS.forEach(day => {
+              SLOTS.forEach(slot => {
+                
+                // Filtrer les utilisateurs disponibles pour ce créneau
+                let availableUsers = users.filter(u => u.slots?.[day]?.[slot]);
+
+                if (availableUsers.length < 2) return; 
+
+                // Utilisation d'un set pour suivre les utilisateurs déjà inclus dans un groupe
+                let matchedUserIds = new Set();
+                let groups = [];
+
+                // Itération pour former les groupes
+                availableUsers.forEach(userA => {
+                  if (matchedUserIds.has(userA.userId)) return;
+
+                  let currentGroup = [userA];
+                  matchedUserIds.add(userA.userId);
+
+                  // Chercher les autres membres compatibles
+                  availableUsers.forEach(userB => {
+                    if (userA.userId === userB.userId || matchedUserIds.has(userB.userId)) return;
+
+                    // Vérifier la compatibilité de UserB avec TOUS les membres actuels du groupe
+                    const isCompatibleWithGroup = currentGroup.every(existingMember =>
+                      areDogsCompatible(existingMember.dogProfileLabel, userB.dogProfileLabel)
+                    );
+
+                    if (isCompatibleWithGroup) {
+                      currentGroup.push(userB);
+                      matchedUserIds.add(userB.userId);
+                    }
+                  });
+
+                  // Si le groupe a au moins 2 membres, le valider
+                  if (currentGroup.length >= 2) {
+                    groups.push(currentGroup);
+                  } else {
+                    // Si un utilisateur ne peut pas être groupé, on le dé-match 
+                    matchedUserIds.delete(userA.userId);
+                  }
+                });
+
+                // 3. Finaliser et sauvegarder les matchs
+                groups.forEach(group => {
+                  // Déterminer le lieu recommandé (le plus fréquent ou Niort)
+                  const cityCounts = group.reduce((acc, m) => {
+                    acc[m.city] = (acc[m.city] || 0) + 1;
+                    return acc;
+                  }, {});
+
+                  let recommendedCity = 'Niort';
+                  let maxCount = 0;
+                  
+                  for (const [city, count] of Object.entries(cityCounts)) {
+                    if (count > maxCount) {
+                      maxCount = count;
+                      recommendedCity = city;
+                    } else if (count === maxCount && city === 'Niort') {
+                       recommendedCity = 'Niort';
+                    }
+                  }
+                  
+                  const matchData = {
+                    timeSlot: slot,
+                    date: day,
+                    members: group.map(m => ({ userId: m.userId, name: m.name, color: m.dogProfileColor })),
+                    location: recommendedCity,
+                    messages: [],
+                    createdAt: serverTimestamp(),
+                  };
+
+                  // Utiliser un ID basé sur le créneau + un hash pour l'unicité
+                  const matchId = `${day}-${slot}-${Math.random().toString(36).substring(2, 9)}`;
+                  successfulMatches.push(setDoc(doc(getPublicCollectionRef('matches'), matchId), matchData));
+                });
+              });
+            });
+
+            try {
+              await Promise.all(successfulMatches);
+              updateStatus('success', `Matching terminé! ${successfulMatches.length} groupe(s) créé(s). Consultez l'onglet "Groupes & Chat".`);
+            } catch (e) {
+              console.error("Erreur lors de la sauvegarde des matchs: ", e);
+              updateStatus('error', 'Erreur lors de la sauvegarde des matchs.');
+            }
+          };
+          
+          // --- Composants d'interface utilisateur (UI) ---
+
+          const NavButton = ({ tab, label, icon }) => (
+            <button
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 p-3 text-center transition-colors duration-200 rounded-lg ${activeTab === tab
+                ? 'bg-indigo-600 text-white shadow-lg'
+                : 'bg-white text-gray-700 hover:bg-indigo-50'
+                }`}
+            >
+              <span className="text-xl">{icon}</span>
+              <span className="block text-xs font-semibold mt-1">{label}</span>
+            </button>
+          );
+
+          const StatusDisplay = ({ message }) => {
+            if (!message.text) return null;
+            let baseStyle = "p-3 rounded-lg text-sm mb-4 font-medium";
+            if (message.type === 'success') {
+              baseStyle += " bg-green-100 text-green-700 border border-green-300";
+            } else if (message.type === 'error') {
+              baseStyle += " bg-red-100 text-red-700 border border-red-300";
+            } else {
+              baseStyle += " bg-blue-100 text-blue-700 border border-blue-300";
+            }
+
+            return (
+              <div className={baseStyle} role="alert">
+                {message.text}
+              </div>
+            );
+          };
+          
+          // --- Page 1: Disponibilités ---
+          const PageDisponibilites = () => (
+            <div>
+              <h2 className="text-2xl font-bold mb-4 text-gray-800">📍 Mes Disponibilités</h2>
+              <p className="mb-6 text-gray-600">Sélectionnez les créneaux où vous souhaitez faire une balade.</p>
+              
+              {(!isReady || (userProfile && !userProfile.dogProfileLabel)) && (
+                <div className="bg-red-50 border border-red-200 p-4 rounded-xl mb-6 shadow-sm">
+                  <p className="font-semibold text-red-700">🔒 Profil incomplet</p>
+                  <p className="text-sm text-red-600">Pour participer au matching, veuillez d'abord : 1. Vous attribuer un profil de chien (bouton Admin ci-dessous). 2. Remplir votre nom et ville sur l'onglet "Mon Profil".</p>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full bg-white shadow-xl rounded-xl">
+                  <thead>
+                    <tr className="bg-gray-100 text-gray-600 text-sm leading-normal">
+                      <th className="py-3 px-2 text-left font-semibold sticky-col bg-gray-100">Créneau</th>
+                      {DAYS.map(day => (
+                        <th key={day} className="py-3 px-2 text-center font-semibold">{day}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="text-gray-600 text-sm font-light">
+                    {SLOTS.map(slot => (
+                      <tr key={slot} className="border-b border-gray-200 hover:bg-gray-50">
+                        <td className="py-3 px-2 font-medium sticky-col sticky-col-body bg-white border-r border-gray-200">{slot}</td>
+                        {DAYS.map(day => {
+                          const isAvailable = availabilities[day]?.[slot] || false;
+                          return (
+                            <td key={`${day}-${slot}`} className="py-2 px-2 text-center">
+                              <button
+                                onClick={() => handleSlotToggle(day, slot)}
+                                className={`w-10 h-10 rounded-full transition-all duration-150 ease-in-out flex items-center justify-center border-2 shadow-inner 
+                                  ${isAvailable
+                                    ? 'bg-indigo-500 border-indigo-600 text-white transform scale-110'
+                                    : 'bg-gray-200 border-gray-300 text-gray-600 hover:bg-indigo-100'
+                                  }`}
+                                aria-label={`Toggle availability for ${day} ${slot}`}
+                                disabled={!isReady}
+                              >
+                                {isAvailable ? '✔' : ' '}
+                              </button>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="text-xl font-bold mt-8 mb-4 text-gray-800">⚙️ Outils de Démo Admin</h3>
+              <p className="text-sm text-gray-600 mb-4">Ces boutons simulent les actions que l'administrateur Black Dog Balades ferait côté serveur.</p>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <button
+                  onClick={assignRandomProfile}
+                  className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 px-4 rounded-xl transition shadow-md"
+                  disabled={!isReady}
+                >
+                  {userProfile?.dogProfileLabel ? `Ré-assigner Profil (${userProfile.dogProfileLabel})` : '1. Assignation Profil Chien (Admin Simulé)'}
+                </button>
+                <button
+                  onClick={runMatchingLogic}
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3 px-4 rounded-xl transition shadow-md"
+                  disabled={!isReady}
+                >
+                  2. Lancer le Matching (Admin Simulé)
+                </button>
+              </div>
+            </div>
+          );
+
+          // --- Page 2: Profil ---
+          const PageProfil = () => (
+            <div>
+              <h2 className="text-2xl font-bold mb-4 text-gray-800">🐾 Mon Profil</h2>
+              <p className="mb-6 text-gray-600">Votre identifiant unique : <code className="text-xs bg-gray-100 p-1 rounded break-all">{userId || 'Chargement...'}</code></p>
+
+              {userProfile && userProfile.dogProfileLabel ? (
+                <div className="p-6 mb-6 bg-white border-4 border-indigo-200 rounded-2xl shadow-xl flex items-center justify-between">
+                  <div>
+                    <p className="text-lg font-semibold text-gray-700">Couleur de Profil :</p>
+                    <p className="text-3xl mt-1">{userProfile.dogProfileColor} {userProfile.dogProfileColor} {userProfile.dogProfileColor}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500">Profil attribué (Règle de compatibilité)</p>
+                    <p className="text-sm font-bold text-indigo-600">
+                      {/* Affichage de l'étiquette pour la démo */}
+                      {isReady && userProfile.dogProfileLabel ? `(DÉMO: ${userProfile.dogProfileLabel})` : 'En attente'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 mb-6 bg-red-100 border border-red-300 rounded-2xl shadow-md text-red-800">
+                    <p className="font-semibold">Action Requise :</p>
+                    <p className="text-sm">Veuillez d'abord vous attribuer un profil de chien via le bouton **"Assignation Profil Chien (Admin Simulé)"** dans l'onglet **Disponibilités**.</p>
+                </div>
+              )}
+
+              <div className="bg-white p-6 rounded-2xl shadow-xl">
+                <div className="mb-4">
+                  <label className="block text-gray-700 font-semibold mb-2" htmlFor="userName">Nom / Prénom</label>
+                  <input
+                    id="userName"
+                    type="text"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    disabled={!isEditingProfile}
+                    className={`w-full p-3 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 ${isEditingProfile ? 'bg-white border-gray-300' : 'bg-gray-100 border-gray-200'}`}
+                    placeholder="Ex: Jean Dupont"
+                  />
+                </div>
+                <div className="mb-6">
+                  <label className="block text-gray-700 font-semibold mb-2" htmlFor="userCity">Ville de Résidence</label>
+                  <input
+                    id="userCity"
+                    type="text"
+                    value={userCity}
+                    onChange={(e) => setUserCity(e.target.value)}
+                    disabled={!isEditingProfile}
+                    className={`w-full p-3 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 ${isEditingProfile ? 'bg-white border-gray-300' : 'bg-gray-100 border-gray-200'}`}
+                    placeholder="Ex: Niort ou La Rochelle"
+                  />
+                </div>
+
+                {isEditingProfile ? (
+                  <button
+                    onClick={handleSaveProfile}
+                    className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-xl transition shadow-md"
+                    disabled={!isReady}
+                  >
+                    Sauvegarder le Profil
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsEditingProfile(true)}
+                    className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-3 rounded-xl transition shadow-md"
+                    disabled={!isReady}
+                  >
+                    Modifier
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+
+          // --- Page 3: Groupes ---
+          const PageGroupes = () => (
+            <div>
+              <h2 className="text-2xl font-bold mb-6 text-gray-800">💬 Mes Groupes de Balades</h2>
+
+              {matches.length === 0 ? (
+                <div className="p-8 bg-white rounded-2xl shadow-xl text-center">
+                  <p className="text-6xl mb-4">😴</p>
+                  <p className="text-lg font-semibold text-gray-700">Pas de balades prévues pour le moment.</p>
+                  <p className="text-sm text-gray-500 mt-2">1. Vérifiez vos disponibilités et votre profil. 2. Lancez le matching (Admin Simulé) sur la page **Disponibilités**.</p>
+                </div>
+              ) : (
+                matches.map(match => <MatchCard key={match.id} match={match} onSendMessage={handleSendMessage} currentUserId={userId} />)
+              )}
+            </div>
+          );
+
+          // Composant pour une carte de Match
+          const MatchCard = ({ match, onSendMessage, currentUserId }) => {
+            const [messageInput, setMessageInput] = useState('');
+            const { date, timeSlot, location, members, messages = [] } = match;
+
+            const memberList = members.map(m => m.color + ' ' + m.name).join(', ');
+
+            // Triez les messages. Les messages sans timestamp ou avec serverTimestamp() en attente iront à la fin.
+            const sortedMessages = messages.sort((a, b) => {
+                const timestampA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+                const timestampB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+                return timestampA - timestampB;
+            }).filter(msg => msg.text); // Filtrer les messages incomplets si serverTimestamp est encore en attente
+
+            const handleSend = () => {
+              if (messageInput.trim()) {
+                // onSendMessage gère la réinitialisation de l'input
+                onSendMessage(match.id, messageInput);
+              }
+            };
+            
+            // Effet pour forcer le scroll vers le bas du chat lors de nouveaux messages
+            const chatContainerRef = useRef(null);
+            useEffect(() => {
+                if (chatContainerRef.current) {
+                    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+                }
+            }, [messages.length]);
+
+            return (
+              <div className="bg-white p-6 rounded-2xl shadow-xl mb-6 border border-indigo-200">
+                <div className="mb-4 flex justify-between items-start">
+                  <div>
+                    <h3 className="text-xl font-bold text-indigo-700">Balade : {date} ({timeSlot})</h3>
+                    <p className="text-sm text-gray-600 mt-1">Lieu recommandé : <span className="font-semibold text-indigo-600">{location}</span></p>
+                  </div>
+                  <div className="bg-indigo-100 text-indigo-600 text-xs font-bold py-1 px-3 rounded-full shadow-inner">
+                    {members.length} Chiens
+                  </div>
+                </div>
+
+                <p className="text-sm mb-4 border-t pt-3">
+                  <span className="font-semibold">Membres :</span> {memberList}
+                </p>
+
+                {/* Espace Discussion */}
+                <div 
+                    ref={chatContainerRef}
+                    className="h-48 overflow-y-auto bg-gray-50 p-3 rounded-lg border mb-4"
+                >
+                  {sortedMessages.length === 0 ? (
+                    <p className="text-center text-gray-400 text-sm italic">Démarrez la conversation...</p>
+                  ) : (
+                    sortedMessages.map((msg, index) => (
+                      <div key={index} className={`mb-2 flex ${msg.senderId === currentUserId ? 'justify-end' : 'justify-start'}`}>
+                        <span
+                          className={`inline-block p-3 rounded-xl text-sm max-w-[80%] shadow-md 
+                            ${msg.senderId === currentUserId 
+                              ? 'bg-indigo-500 text-white rounded-br-none' 
+                              : 'bg-gray-200 text-gray-800 rounded-tl-none'
+                            }`}
+                        >
+                          {msg.senderId !== currentUserId && <span className="block font-semibold text-xs mb-1 opacity-80">{msg.senderName}</span>}
+                          {msg.text}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Zone d'envoi de message */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={messageInput}
+                    onChange={(e) => setMessageInput(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                    placeholder="Écrire un message..."
+                    className="flex-1 p-3 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={handleSend}
+                    className="bg-indigo-500 hover:bg-indigo-600 text-white p-3 rounded-xl font-bold transition shadow-md"
+                    disabled={!messageInput.trim()}
+                  >
+                    Envoyer
+                  </button>
+                </div>
+              </div>
+            );
+          };
+
+
+          // --- RENDU GLOBAL ---
+          if (!isReady || authState.error) {
+            return (
+              <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                <div className="text-center p-6 bg-white rounded-xl shadow-2xl">
+                    <svg className={`h-8 w-8 mx-auto mb-4 ${authState.error ? 'text-red-500' : 'animate-spin text-indigo-500'}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    {authState.error ? (
+                        <>
+                            <p className="mt-4 text-lg font-semibold text-red-700">Erreur de Connexion à Firebase</p>
+                            <p className="mt-2 text-sm text-red-600">Veuillez vérifier que les 7 champs de `firebaseConfig` sont correctement remplacés dans le `<script type="module">` par votre configuration personnelle.</p>
+                            <p className="mt-4 text-xs text-red-400">Détails: {authState.error}</p>
+                        </>
+                    ) : (
+                        <p className="mt-4 text-gray-700">Connexion à Firebase en cours...</p>
+                    )}
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="min-h-screen bg-gray-50 font-sans p-4 sm:p-6">
+              <div className="max-w-4xl mx-auto">
+                
+                <h1 className="text-3xl font-extrabold text-gray-900 mb-6">
+                  <span className="text-indigo-600">🐾 Black Dog Balades</span>
+                </h1>
+
+                <div className="sticky top-0 z-10 bg-gray-50 pt-1 pb-4">
+                  <div className="flex justify-around bg-white p-2 rounded-2xl shadow-xl space-x-2">
+                    <NavButton tab="profil" label="Mon Profil" icon="👤" />
+                    <NavButton tab="disponibilites" label="Disponibilités" icon="📅" />
+                    <NavButton tab="groupes" label="Groupes & Chat" icon="💬" />
+                  </div>
+                </div>
