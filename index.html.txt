@@ -1,0 +1,31 @@
+tml lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Black Dog Balades</title>
+    <!-- Chargement de Tailwind CSS pour le style -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Utilisation de la police Inter -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <!-- Le conteneur où l'application React sera rendue -->
+    <div id="root"></div>
+
+    <!-- Chargement des librairies React et ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Utilisation de Babel pour compiler le JSX/ES6 en temps réel (pour la démo simple) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Import du code de l'application -->
+    <script type="text/babel" data-type="module" src="./App.jsx"></script>
+</body>
+</html>
